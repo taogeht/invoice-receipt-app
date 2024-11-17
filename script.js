@@ -1121,11 +1121,15 @@ function showInvoice(studentName = null, year = null, month = null) {
     });
 
     const totalAmount = monthBookings.reduce((sum, booking) => sum + booking.amount, 0);
+    const totalHours = monthBookings.reduce((sum, booking) => sum + booking.duration_hours, 0);
+    
     html += `
         </div>
         <div class="invoice-total">
-            <div class="total-label">Total:</div>
-            <div class="total-amount">$${totalAmount.toFixed(2)}</div>
+            <div class="total-wrapper">
+                <div class="total-hours">Total Hours: ${totalHours.toFixed(1)}</div>
+                <div class="total-amount">Total: $${totalAmount.toFixed(2)}</div>
+            </div>
         </div>
     `;
 
