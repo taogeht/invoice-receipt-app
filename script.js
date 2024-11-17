@@ -1195,35 +1195,50 @@ function generatePDF(studentName = null, year = null, month = null) {
         // Column headers
         doc.setFontSize(10);
         doc.text('Date', 20, yPos);
-        doc.text('Student', 60, yPos);
-        doc.text('Time', 120, yPos);
-        doc.text('Amount', 180, yPos);
+        doc.text('Student', 55, yPos);
+        doc.text('Time', 105, yPos);
+        doc.text('Hours', 145, yPos);
+        doc.text('Amount', 175, yPos);
         yPos += 8;
 
         // Bookings
+        let totalHours = 0;
         monthBookings.forEach(booking => {
-            if (yPos > 270) {  // Check if we need a new page
+            if (yPos > 250) {  // Reduced max height to accommodate footer
                 doc.addPage();
                 yPos = 20;
             }
 
             const dateStr = new Date(booking.booking_date).toLocaleDateString();
             const timeStr = `${booking.start_time} - ${booking.end_time}`;
+            totalHours += booking.duration_hours;
 
             doc.text(dateStr, 20, yPos);
-            doc.text(booking.student_name, 60, yPos);
-            doc.text(timeStr, 120, yPos);
-            doc.text(`$${booking.amount.toFixed(2)}`, 180, yPos);
+            doc.text(booking.student_name, 55, yPos);
+            doc.text(timeStr, 105, yPos);
+            doc.text(booking.duration_hours.toString(), 145, yPos);
+            doc.text(`$${booking.amount.toFixed(2)}`, 175, yPos);
 
             yPos += 8;
         });
 
-        // Total
+        // Totals
         const totalAmount = monthBookings.reduce((sum, booking) => sum + booking.amount, 0);
         yPos += 5;
         doc.setFontSize(12);
         doc.setTextColor(251, 79, 20);
+        doc.text(`Total Hours: ${totalHours.toFixed(1)}`, 105, yPos);
         doc.text(`Total: $${totalAmount.toFixed(2)}`, 150, yPos);
+        
+        // Add footer text
+        yPos = doc.internal.pageSize.height - 30; // Position footer 30 units from bottom
+        doc.setFontSize(10);
+        doc.setTextColor(0);
+        doc.text('Thank you for your business. If you have any questions please feel free to ask.', 20, yPos);
+        yPos += 10;
+        doc.text('Sincerely yours,', 20, yPos);
+        yPos += 7;
+        doc.text('Ryan Lazowski', 20, yPos);
 
         // Generate filename
         const filename = studentName 
@@ -1236,6 +1251,116 @@ function generatePDF(studentName = null, year = null, month = null) {
         alert('Failed to generate PDF. Please try again.');
     }
 }
+
+function generateIndividualPDF(studentBookings, studentName) {
+    // Create new jsPDF instance
+    const doc = new jspdf.jsPDF();
+    let yPos = 20;
+    const pageHeight = doc.internal.pageSize.height;
+
+    // Header
+    doc.setFontSize(20);
+    doc.setTextColor(251, 79, 20); // #FB4F14
+    doc.text('Class Schedule Invoice', 20, yPos);
+    yPos += 10;
+
+    // Student name
+    doc.setFontSize(14);
+    doc.setTextColor(0);
+    doc.text(studentName, 20, yPos);
+    yPos += 10;
+
+    // Generation date
+    doc.setFontSize(10);
+    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 20, yPos);
+    yPos += 20;
+
+    // Group bookings by month
+    const bookingsByMonth = studentBookings.reduce((groups, booking) => {
+        const date = new Date(booking.booking_date);
+        const monthKey = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+        if (!groups[monthKey]) groups[monthKey] = [];
+        groups[monthKey].push(booking);
+        return groups;
+    }, {});
+
+    // Add content for each month
+    Object.entries(bookingsByMonth).forEach(([month, monthBookings]) => {
+        // Check if we need a new page
+        if (yPos > pageHeight - 70) { // Increased margin for footer
+            doc.addPage();
+            yPos = 20;
+        }
+
+        // Month header
+        doc.setFontSize(12);
+        doc.setTextColor(251, 79, 20);
+        doc.text(month, 20, yPos);
+        yPos += 10;
+
+        // Column headers
+        doc.setFontSize(10);
+        doc.setTextColor(0);
+        doc.text('Date', 20, yPos);
+        doc.text('Time', 70, yPos);
+        doc.text('Hours', 120, yPos);
+        doc.text('Amount', 170, yPos);
+        yPos += 8;
+
+        // Monthly totals
+        let monthlyHours = 0;
+
+        // Bookings for this month
+        monthBookings.forEach(booking => {
+            if (yPos > pageHeight - 70) { // Increased margin for footer
+                doc.addPage();
+                yPos = 20;
+            }
+
+            const dateStr = new Date(booking.booking_date).toLocaleDateString();
+            const timeStr = `${booking.start_time} - ${booking.end_time}`;
+            const amountStr = `$${booking.amount.toFixed(2)}`;
+            monthlyHours += booking.duration_hours;
+
+            doc.text(dateStr, 20, yPos);
+            doc.text(timeStr, 70, yPos);
+            doc.text(booking.duration_hours.toString(), 120, yPos);
+            doc.text(amountStr, 170, yPos);
+
+            yPos += 8;
+        });
+
+        // Monthly total
+        const monthlyTotal = monthBookings.reduce((sum, booking) => sum + booking.amount, 0);
+        yPos += 5;
+        doc.text(`Monthly Hours: ${monthlyHours.toFixed(1)}`, 100, yPos);
+        doc.text(`Monthly Total: $${monthlyTotal.toFixed(2)}`, 150, yPos);
+        yPos += 15;
+    });
+
+    // Grand totals
+    const grandTotal = studentBookings.reduce((sum, booking) => sum + booking.amount, 0);
+    const totalHours = studentBookings.reduce((sum, booking) => sum + booking.duration_hours, 0);
+    doc.setFontSize(12);
+    doc.setTextColor(251, 79, 20);
+    doc.text(`Total Hours: ${totalHours.toFixed(1)}`, 100, yPos);
+    doc.text(`Grand Total: $${grandTotal.toFixed(2)}`, 150, yPos);
+
+    // Add footer text
+    yPos = pageHeight - 30; // Position footer 30 units from bottom
+    doc.setFontSize(10);
+    doc.setTextColor(0);
+    doc.text('Thank you for your business. If you have any questions please feel free to ask.', 20, yPos);
+    yPos += 10;
+    doc.text('Sincerely yours,', 20, yPos);
+    yPos += 7;
+    doc.text('Ryan Lazowski', 20, yPos);
+
+    // Save the PDF with student's name
+    const filename = `invoice_${studentName.replace(/\s+/g, '_')}.pdf`;
+    doc.save(filename);
+}
+
 async function generateAllPDFs(year = null, month = null) {
     try {
         // Use selected month/year or get from select element
@@ -1359,97 +1484,7 @@ async function generateAllPDFs(year = null, month = null) {
     }
 }
 
-function generateIndividualPDF(studentBookings, studentName) {
-    // Create new jsPDF instance
-    const doc = new jspdf.jsPDF();
-    let yPos = 20;
-    const pageHeight = doc.internal.pageSize.height;
 
-    // Header
-    doc.setFontSize(20);
-    doc.setTextColor(251, 79, 20); // #FB4F14
-    doc.text('Class Schedule Invoice', 20, yPos);
-    yPos += 10;
-
-    // Student name
-    doc.setFontSize(14);
-    doc.setTextColor(0);
-    doc.text(studentName, 20, yPos);
-    yPos += 10;
-
-    // Generation date
-    doc.setFontSize(10);
-    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 20, yPos);
-    yPos += 20;
-
-    // Group bookings by month
-    const bookingsByMonth = studentBookings.reduce((groups, booking) => {
-        const date = new Date(booking.booking_date);
-        const monthKey = date.toLocaleString('default', { month: 'long', year: 'numeric' });
-        if (!groups[monthKey]) groups[monthKey] = [];
-        groups[monthKey].push(booking);
-        return groups;
-    }, {});
-
-    // Add content for each month
-    Object.entries(bookingsByMonth).forEach(([month, monthBookings]) => {
-        // Check if we need a new page
-        if (yPos > pageHeight - 40) {
-            doc.addPage();
-            yPos = 20;
-        }
-
-        // Month header
-        doc.setFontSize(12);
-        doc.setTextColor(251, 79, 20);
-        doc.text(month, 20, yPos);
-        yPos += 10;
-
-        // Column headers
-        doc.setFontSize(10);
-        doc.setTextColor(0);
-        doc.text('Date', 20, yPos);
-        doc.text('Time', 80, yPos);
-        doc.text('Duration', 140, yPos);
-        doc.text('Amount', 180, yPos);
-        yPos += 8;
-
-        // Bookings for this month
-        monthBookings.forEach(booking => {
-            if (yPos > pageHeight - 40) {
-                doc.addPage();
-                yPos = 20;
-            }
-
-            const dateStr = new Date(booking.booking_date).toLocaleDateString();
-            const timeStr = `${booking.start_time} - ${booking.end_time}`;
-            const amountStr = `$${booking.amount.toFixed(2)}`;
-
-            doc.text(dateStr, 20, yPos);
-            doc.text(timeStr, 80, yPos);
-            doc.text(`${booking.duration_hours}hrs`, 140, yPos);
-            doc.text(amountStr, 180, yPos);
-
-            yPos += 8;
-        });
-
-        // Monthly total
-        const monthlyTotal = monthBookings.reduce((sum, booking) => sum + booking.amount, 0);
-        yPos += 5;
-        doc.text(`Monthly Total: $${monthlyTotal.toFixed(2)}`, 150, yPos);
-        yPos += 15;
-    });
-
-    // Grand total
-    const grandTotal = studentBookings.reduce((sum, booking) => sum + booking.amount, 0);
-    doc.setFontSize(12);
-    doc.setTextColor(251, 79, 20);
-    doc.text(`Grand Total: $${grandTotal.toFixed(2)}`, 150, yPos);
-
-    // Save the PDF with student's name
-    const filename = `invoice_${studentName.replace(/\s+/g, '_')}.pdf`;
-    doc.save(filename);
-}
 
 // Event Listeners for Invoice Buttons
 document.getElementById('showAllInvoices')?.addEventListener('click', () => showInvoice());
