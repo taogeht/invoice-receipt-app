@@ -144,6 +144,7 @@ function displayDayBookings() {
     const dayBookingsDiv = document.getElementById('dayBookings');
     
     if (!selectedDate) {
+        document.getElementById('selectedDate').textContent = 'Select a Day';
         dayBookingsDiv.innerHTML = '<p class="no-bookings">Select a day to view schedule</p>';
         return;
     }
@@ -152,6 +153,30 @@ function displayDayBookings() {
     const dayBookings = bookings
         .filter(booking => booking.booking_date === selectedDateStr)
         .sort((a, b) => new Date(`2000/01/01 ${a.start_time}`) - new Date(`2000/01/01 ${b.start_time}`));
+
+    // Calculate total hours for the day
+    const totalHours = dayBookings.reduce((sum, booking) => {
+        const start = new Date(`2000/01/01 ${booking.start_time}`);
+        const end = new Date(`2000/01/01 ${booking.end_time}`);
+        return sum + (end - start) / (1000 * 60 * 60);
+    }, 0);
+
+    // Update header with date and total hours
+    const formattedDate = selectedDate.toLocaleDateString('en-US', { 
+        weekday: 'long', 
+        month: 'long', 
+        day: 'numeric', 
+        year: 'numeric' 
+    });
+    
+    const scheduleHeader = document.querySelector('.schedule-header');
+    scheduleHeader.innerHTML = `
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <h2 id="selectedDate">${formattedDate}</h2>
+            ${totalHours > 0 ? `<h3>Day's Hours: ${totalHours.toFixed(1)}</h3>` : ''}
+        </div>
+    `;
+
     if (dayBookings.length === 0) {
         dayBookingsDiv.innerHTML = '<p class="no-bookings">No bookings for this day</p>';
         return;
