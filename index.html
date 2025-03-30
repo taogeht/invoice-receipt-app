@@ -98,13 +98,15 @@
             <h2>Invoices</h2>
             <button id="showAllInvoices">Show All Invoices</button>
             <button id="downloadAllInvoices">Download All Invoices</button>
+            <button id="mergeInvoices">Merge Invoices</button>
 
             <div id="studentInvoices" class="student-invoices"></div>
 
             <div id="invoiceDisplay" class="invoice-display"></div>
         </div>
     </div>
- <!-- Student Management Modal -->
+
+<!-- Student Management Modal -->
 <div id="studentModal" class="modal">
     <div class="modal-content">
         <div class="modal-header">
@@ -130,6 +132,44 @@
     </div>
 </div>
 
+<!-- Merge Invoices Modal -->
+<div id="mergeInvoicesModal" class="modal">
+    <div class="modal-content">
+        <div class="modal-header">
+            <h2>Merge Invoices</h2>
+            <span class="close">&times;</span>    
+        </div>
+
+        <div class="modal-form">
+            <p>Select two months to merge into a single invoice:</p>
+            
+            <div class="form-group">
+                <label for="firstMonth">First Month:</label>
+                <select id="firstMonth" class="month-select">
+                    <!-- Will be populated dynamically -->
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="secondMonth">Second Month:</label>
+                <select id="secondMonth" class="month-select">
+                    <!-- Will be populated dynamically -->
+                </select>
+            </div>
+            
+            <div class="form-group">
+                <label for="mergeStudentSelect">Student:</label>
+                <select id="mergeStudentSelect">
+                    <option value="">All Students (generates individual invoices)</option>
+                    <!-- Will be populated dynamically -->
+                </select>
+                <p class="help-text">Selecting "All Students" will create separate merged invoices for each student.</p>
+            </div>
+            
+            <button id="generateMergedInvoice" class="primary-btn">Generate Merged Invoice</button>
+        </div>
+    </div>
+</div>
 
     <script src="script.js"></script>
 </body>

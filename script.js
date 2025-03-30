@@ -1,5 +1,11 @@
 const { jsPDF } = window.jspdf;
 
+// Function to sanitize filenames by replacing problematic characters
+function sanitizeFilename(name) {
+    // Replace forward slashes with hyphens and any other problematic characters
+    return name.replace(/\//g, '-').replace(/[\\:*?"<>|]/g, '_');
+}
+
 // Main state variables
 let currentDate = new Date();
 let selectedDate = null;
@@ -1109,7 +1115,7 @@ function showInvoice(studentName = null, year = null, month = null) {
 
     // Filter bookings for selected month and student
     const monthBookings = bookings.filter(booking => {
-        const bookingDate = new Date(booking.booking_date + 'T00:00:00'); // Add time to ensure local date
+        const bookingDate = new Date(booking.booking_date);
         const matchesMonth = bookingDate.getFullYear() === parseInt(year) && 
                            bookingDate.getMonth() === parseInt(month) - 1;
         return matchesMonth && (!studentName || booking.student_name === studentName);
@@ -1175,6 +1181,347 @@ function groupBookingsByMonth(bookings) {
     }, {});
 }
 
+// Function to generate a merged invoice from two months
+function generateMergedInvoice() {
+    const firstMonthSelect = document.getElementById('firstMonth');
+    const secondMonthSelect = document.getElementById('secondMonth');
+    const mergeStudentSelect = document.getElementById('mergeStudentSelect');
+    
+    const firstMonth = firstMonthSelect.value;
+    const secondMonth = secondMonthSelect.value;
+    const selectedStudent = mergeStudentSelect.value;
+    
+    if (!firstMonth || !secondMonth) {
+        alert('Please select both months to merge');
+        return;
+    }
+    
+    if (firstMonth === secondMonth) {
+        alert('Please select two different months to merge');
+        return;
+    }
+    
+    // Parse the selected months
+    const [firstYear, firstMonthNum] = firstMonth.split('-').map(Number);
+    const [secondYear, secondMonthNum] = secondMonth.split('-').map(Number);
+    
+    // Filter bookings for the selected months
+    const firstMonthBookings = bookings.filter(booking => {
+        const bookingDate = new Date(booking.booking_date);
+        return bookingDate.getFullYear() === firstYear && 
+               bookingDate.getMonth() === firstMonthNum - 1;
+    });
+    
+    const secondMonthBookings = bookings.filter(booking => {
+        const bookingDate = new Date(booking.booking_date);
+        return bookingDate.getFullYear() === secondYear && 
+               bookingDate.getMonth() === secondMonthNum - 1;
+    });
+    
+    // Combine all bookings from both months
+    const allMergedBookings = [...firstMonthBookings, ...secondMonthBookings];
+    
+    if (allMergedBookings.length === 0) {
+        alert('No bookings found for the selected months');
+        return;
+    }
+    
+    // If a specific student is selected, generate only their invoice
+    if (selectedStudent) {
+        const studentBookings = allMergedBookings.filter(booking => 
+            booking.student_name === selectedStudent
+        ).sort((a, b) => new Date(a.booking_date) - new Date(b.booking_date));
+        
+        if (studentBookings.length === 0) {
+            alert(`No bookings found for ${selectedStudent} in the selected months`);
+            return;
+        }
+        
+        generateMergedPDF(studentBookings, selectedStudent, firstMonth, secondMonth);
+    } 
+    // If "All Students" is selected, generate individual invoices for each student
+    else {
+        // Get unique students from the merged bookings
+        const uniqueStudents = [...new Set(allMergedBookings.map(booking => booking.student_name))].sort();
+        
+        if (uniqueStudents.length === 0) {
+            alert('No students found with bookings in the selected months');
+            return;
+        }
+        
+        // Create a zip file to contain all the PDFs
+        const zip = new JSZip();
+        let invoiceCount = 0;
+        
+        // Generate a separate invoice for each student
+        uniqueStudents.forEach(student => {
+            const studentBookings = allMergedBookings.filter(booking => 
+                booking.student_name === student
+            ).sort((a, b) => new Date(a.booking_date) - new Date(b.booking_date));
+            
+            if (studentBookings.length > 0) {
+                // Generate PDF for this student
+                const pdfDoc = generateMergedPDFForZip(studentBookings, student, firstMonth, secondMonth);
+                
+                // Add the PDF to the zip file
+                if (pdfDoc) {
+                    const pdfBlob = pdfDoc.output('blob');
+                    const filename = `Merged_Invoice_${sanitizeFilename(student.replace(/\s+/g, '_'))}.pdf`;
+                    zip.file(filename, pdfBlob);
+                    invoiceCount++;
+                }
+            }
+        });
+        
+        if (invoiceCount > 0) {
+            // Generate and download the zip file
+            zip.generateAsync({ type: 'blob' }).then(content => {
+                const [firstMonthName, secondMonthName] = getMonthNames(firstMonth, secondMonth);
+                const zipFilename = `Merged_Invoices_${firstMonthName.replace(/\s+/g, '_')}_and_${secondMonthName.replace(/\s+/g, '_')}.zip`;
+                
+                // Create a download link and trigger it
+                const link = document.createElement('a');
+                link.href = URL.createObjectURL(content);
+                link.download = zipFilename;
+                document.body.appendChild(link);
+                link.click();
+                
+                // Clean up
+                URL.revokeObjectURL(link.href);
+            }).catch(error => {
+                console.error('Error generating zip file:', error);
+                alert('Failed to generate zip file. Please try again.');
+            });
+        } else {
+            alert('No invoices were generated. Please check your selection.');
+        }
+    }
+    
+    // Close the modal
+    document.getElementById('mergeInvoicesModal').style.display = 'none';
+}
+
+// Helper function to get month names
+function getMonthNames(firstMonth, secondMonth) {
+    const [firstYear, firstMonthNum] = firstMonth.split('-').map(Number);
+    const [secondYear, secondMonthNum] = secondMonth.split('-').map(Number);
+    
+    const firstMonthName = new Date(firstYear, firstMonthNum - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+    const secondMonthName = new Date(secondYear, secondMonthNum - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+    
+    return [firstMonthName, secondMonthName];
+}
+
+// Function to generate a PDF for inclusion in a zip file (returns the PDF object instead of saving it)
+function generateMergedPDFForZip(mergedBookings, studentName, firstMonth, secondMonth) {
+    try {
+        // Get month names
+        const [firstMonthName, secondMonthName] = getMonthNames(firstMonth, secondMonth);
+        
+        // Create PDF document
+        const doc = new jsPDF();
+        let yPos = 20;
+        
+        // Header
+        doc.setFontSize(20);
+        doc.setTextColor(251, 79, 20); // #FB4F14
+        doc.text('Merged Invoice', 20, yPos);
+        yPos += 10;
+        
+        // Months and Student
+        doc.setFontSize(14);
+        doc.setTextColor(0);
+        doc.text(`${firstMonthName} + ${secondMonthName}`, 20, yPos);
+        yPos += 10;
+        
+        doc.text(studentName, 20, yPos);
+        yPos += 10;
+        
+        // Generation date
+        doc.setFontSize(10);
+        doc.text(`Generated: ${new Date().toLocaleDateString()}`, 20, yPos);
+        yPos += 15;
+        
+        // Column headers
+        doc.setFontSize(10);
+        doc.text('Date', 20, yPos);
+        doc.text('Time', 80, yPos);
+        doc.text('Hours', 145, yPos);
+        doc.text('Amount', 175, yPos);
+        yPos += 8;
+        
+        // Draw a line under the headers
+        doc.setDrawColor(200, 200, 200);
+        doc.line(20, yPos - 2, 190, yPos - 2);
+        
+        // Bookings
+        let totalHours = 0;
+        let totalAmount = 0;
+        
+        mergedBookings.forEach(booking => {
+            if (yPos > 250) {  // Add a new page if we're near the bottom
+                doc.addPage();
+                yPos = 20;
+            }
+            
+            const dateStr = new Date(booking.booking_date).toLocaleDateString();
+            const timeStr = `${booking.start_time} - ${booking.end_time}`;
+            totalHours += booking.duration_hours;
+            totalAmount += booking.amount;
+            
+            doc.text(dateStr, 20, yPos);
+            doc.text(timeStr, 80, yPos);
+            doc.text(booking.duration_hours.toString(), 145, yPos);
+            doc.text(`$${booking.amount.toFixed(2)}`, 175, yPos);
+            
+            yPos += 8;
+        });
+        
+        // Draw a line above the totals
+        yPos += 5;
+        doc.setDrawColor(200, 200, 200);
+        doc.line(20, yPos - 2, 190, yPos - 2);
+        
+        // Totals
+        doc.setFontSize(12);
+        doc.setFont(undefined, 'bold');
+        doc.text('Total:', 105, yPos + 5);
+        doc.text(totalHours.toString(), 145, yPos + 5);
+        doc.text(`$${totalAmount.toFixed(2)}`, 175, yPos + 5);
+        
+        // Add footer text
+        yPos = doc.internal.pageSize.height - 30; // Position footer 30 units from bottom
+        doc.setFontSize(10);
+        doc.setTextColor(0);
+        doc.setFont(undefined, 'normal');
+        doc.text('Thank you for your business. If you have any questions please feel free to ask.', 20, yPos);
+        yPos += 10;
+        doc.text('Sincerely yours,', 20, yPos);
+        yPos += 7;
+        doc.text('Ryan Lazowski', 20, yPos);
+        
+        return doc;
+        
+    } catch (error) {
+        console.error('Error generating merged PDF for zip:', error);
+        return null;
+    }
+}
+
+// Function to generate a PDF with merged bookings from two months
+function generateMergedPDF(mergedBookings, studentName, firstMonth, secondMonth) {
+    try {
+        // Get month names
+        const [firstMonthName, secondMonthName] = getMonthNames(firstMonth, secondMonth);
+        
+        // Create PDF document
+        const doc = new jsPDF();
+        let yPos = 20;
+        
+        // Header
+        doc.setFontSize(20);
+        doc.setTextColor(251, 79, 20); // #FB4F14
+        doc.text('Merged Invoice', 20, yPos);
+        yPos += 10;
+        
+        // Months and Student
+        doc.setFontSize(14);
+        doc.setTextColor(0);
+        doc.text(`${firstMonthName} + ${secondMonthName}`, 20, yPos);
+        yPos += 10;
+        
+        if (studentName) {
+            doc.text(studentName, 20, yPos);
+            yPos += 10;
+        }
+        
+        // Generation date
+        doc.setFontSize(10);
+        doc.text(`Generated: ${new Date().toLocaleDateString()}`, 20, yPos);
+        yPos += 15;
+        
+        // Column headers
+        doc.setFontSize(10);
+        doc.text('Date', 20, yPos);
+        if (!studentName) {
+            doc.text('Student', 55, yPos);
+            doc.text('Time', 105, yPos);
+        } else {
+            doc.text('Time', 80, yPos);
+        }
+        doc.text('Hours', 145, yPos);
+        doc.text('Amount', 175, yPos);
+        yPos += 8;
+        
+        // Draw a line under the headers
+        doc.setDrawColor(200, 200, 200);
+        doc.line(20, yPos - 2, 190, yPos - 2);
+        
+        // Bookings
+        let totalHours = 0;
+        let totalAmount = 0;
+        
+        mergedBookings.forEach(booking => {
+            if (yPos > 250) {  // Add a new page if we're near the bottom
+                doc.addPage();
+                yPos = 20;
+            }
+            
+            const dateStr = new Date(booking.booking_date).toLocaleDateString();
+            const timeStr = `${booking.start_time} - ${booking.end_time}`;
+            totalHours += booking.duration_hours;
+            totalAmount += booking.amount;
+            
+            doc.text(dateStr, 20, yPos);
+            if (!studentName) {
+                doc.text(booking.student_name, 55, yPos);
+                doc.text(timeStr, 105, yPos);
+            } else {
+                doc.text(timeStr, 80, yPos);
+            }
+            doc.text(booking.duration_hours.toString(), 145, yPos);
+            doc.text(`$${booking.amount.toFixed(2)}`, 175, yPos);
+            
+            yPos += 8;
+        });
+        
+        // Draw a line above the totals
+        yPos += 5;
+        doc.setDrawColor(200, 200, 200);
+        doc.line(20, yPos - 2, 190, yPos - 2);
+        
+        // Totals
+        doc.setFontSize(12);
+        doc.setFont(undefined, 'bold');
+        doc.text('Total:', 105, yPos + 5);
+        doc.text(totalHours.toString(), 145, yPos + 5);
+        doc.text(`$${totalAmount.toFixed(2)}`, 175, yPos + 5);
+        
+        // Add footer text
+        yPos = doc.internal.pageSize.height - 30; // Position footer 30 units from bottom
+        doc.setFontSize(10);
+        doc.setTextColor(0);
+        doc.setFont(undefined, 'normal');
+        doc.text('Thank you for your business. If you have any questions please feel free to ask.', 20, yPos);
+        yPos += 10;
+        doc.text('Sincerely yours,', 20, yPos);
+        yPos += 7;
+        doc.text('Ryan Lazowski', 20, yPos);
+        
+        // Save the PDF
+        const shortMonthName = new Date(year, month - 1).toLocaleString('default', { month: 'short' });
+        const filename = studentName 
+            ? `Invoice_${shortMonthName}_${year}_${sanitizeFilename(studentName.replace(/\s+/g, '_'))}.pdf` 
+            : `Invoice_${shortMonthName}_${year}_All_Students.pdf`;
+        
+        doc.save(filename);
+    } catch (error) {
+        console.error('Error generating merged PDF:', error);
+        alert('Failed to generate merged invoice. Please try again.');
+    }
+}
+
+// Function to generate a PDF
 function generatePDF(studentName = null, year = null, month = null) {
     try {
         // Use selected month/year or get from select element
@@ -1185,7 +1532,7 @@ function generatePDF(studentName = null, year = null, month = null) {
 
         // Filter bookings for selected month and student
         const monthBookings = bookings.filter(booking => {
-            const bookingDate = new Date(booking.booking_date + 'T00:00:00'); // Add time to ensure local date
+            const bookingDate = new Date(booking.booking_date);
             const matchesMonth = bookingDate.getFullYear() === parseInt(year) && 
                                bookingDate.getMonth() === parseInt(month) - 1;
             return matchesMonth && (!studentName || booking.student_name === studentName);
@@ -1269,10 +1616,11 @@ function generatePDF(studentName = null, year = null, month = null) {
         yPos += 7;
         doc.text('Ryan Lazowski', 20, yPos);
 
-        // Generate filename
+        // Save the PDF
+        const shortMonthName = new Date(year, month - 1).toLocaleString('default', { month: 'short' });
         const filename = studentName 
-            ? `invoice_${studentName.replace(/\s+/g, '_')}_${monthName.replace(/\s+/g, '_')}.pdf`
-            : `all_invoices_${monthName.replace(/\s+/g, '_')}.pdf`;
+            ? `Invoice_${shortMonthName}_${year}_${sanitizeFilename(studentName.replace(/\s+/g, '_'))}.pdf` 
+            : `Invoice_${shortMonthName}_${year}_All_Students.pdf`;
         
         doc.save(filename);
     } catch (error) {
@@ -1281,115 +1629,7 @@ function generatePDF(studentName = null, year = null, month = null) {
     }
 }
 
-function generateIndividualPDF(studentBookings, studentName) {
-    // Create new jsPDF instance
-    const doc = new jspdf.jsPDF();
-    let yPos = 20;
-    const pageHeight = doc.internal.pageSize.height;
-
-    // Header
-    doc.setFontSize(20);
-    doc.setTextColor(251, 79, 20); // #FB4F14
-    doc.text('Class Schedule Invoice', 20, yPos);
-    yPos += 10;
-
-    // Student name
-    doc.setFontSize(14);
-    doc.setTextColor(0);
-    doc.text(studentName, 20, yPos);
-    yPos += 10;
-
-    // Generation date
-    doc.setFontSize(10);
-    doc.text(`Generated: ${new Date().toLocaleDateString()}`, 20, yPos);
-    yPos += 20;
-
-    // Group bookings by month
-    const bookingsByMonth = studentBookings.reduce((groups, booking) => {
-        const date = new Date(booking.booking_date);
-        const monthKey = date.toLocaleString('default', { month: 'long', year: 'numeric' });
-        if (!groups[monthKey]) groups[monthKey] = [];
-        groups[monthKey].push(booking);
-        return groups;
-    }, {});
-
-    // Add content for each month
-    Object.entries(bookingsByMonth).forEach(([month, monthBookings]) => {
-        // Check if we need a new page
-        if (yPos > pageHeight - 70) { // Increased margin for footer
-            doc.addPage();
-            yPos = 20;
-        }
-
-        // Month header
-        doc.setFontSize(12);
-        doc.setTextColor(251, 79, 20);
-        doc.text(month, 20, yPos);
-        yPos += 10;
-
-        // Column headers
-        doc.setFontSize(10);
-        doc.setTextColor(0);
-        doc.text('Date', 20, yPos);
-        doc.text('Time', 70, yPos);
-        doc.text('Hours', 120, yPos);
-        doc.text('Amount', 170, yPos);
-        yPos += 8;
-
-        // Monthly totals
-        let monthlyHours = 0;
-
-        // Bookings for this month
-        monthBookings.forEach(booking => {
-            if (yPos > pageHeight - 70) { // Increased margin for footer
-                doc.addPage();
-                yPos = 20;
-            }
-
-            const dateStr = new Date(booking.booking_date).toLocaleDateString();
-            const timeStr = `${booking.start_time} - ${booking.end_time}`;
-            const amountStr = `$${booking.amount.toFixed(2)}`;
-            monthlyHours += booking.duration_hours;
-
-            doc.text(dateStr, 20, yPos);
-            doc.text(timeStr, 70, yPos);
-            doc.text(booking.duration_hours.toString(), 120, yPos);
-            doc.text(amountStr, 170, yPos);
-
-            yPos += 8;
-        });
-
-        // Monthly total
-        const monthlyTotal = monthBookings.reduce((sum, booking) => sum + booking.amount, 0);
-        yPos += 5;
-        doc.text(`Monthly Hours: ${monthlyHours.toFixed(1)}`, 100, yPos);
-        doc.text(`Monthly Total: $${monthlyTotal.toFixed(2)}`, 150, yPos);
-        yPos += 15;
-    });
-
-    // Grand totals
-    const grandTotal = studentBookings.reduce((sum, booking) => sum + booking.amount, 0);
-    const totalHours = studentBookings.reduce((sum, booking) => sum + booking.duration_hours, 0);
-    doc.setFontSize(12);
-    doc.setTextColor(251, 79, 20);
-    doc.text(`Total Hours: ${totalHours.toFixed(1)}`, 100, yPos);
-    doc.text(`Grand Total: $${grandTotal.toFixed(2)}`, 150, yPos);
-
-    // Add footer text
-    yPos = pageHeight - 30; // Position footer 30 units from bottom
-    doc.setFontSize(10);
-    doc.setTextColor(0);
-    doc.text('Thank you for your business. If you have any questions please feel free to ask.', 20, yPos);
-    yPos += 10;
-    doc.text('Sincerely yours,', 20, yPos);
-    yPos += 7;
-    doc.text('Ryan Lazowski', 20, yPos);
-
-    // Save the PDF with student's name
-    const filename = `invoice_${studentName.replace(/\s+/g, '_')}.pdf`;
-    doc.save(filename);
-}
-
+// Function to generate all PDFs for a month
 async function generateAllPDFs(year = null, month = null) {
     try {
         // Use selected month/year or get from select element
@@ -1421,6 +1661,7 @@ async function generateAllPDFs(year = null, month = null) {
 
         // Generate a PDF for each student
         const monthName = new Date(year, month - 1).toLocaleString('default', { month: 'long', year: 'numeric' });
+        const shortMonthName = new Date(year, month - 1).toLocaleString('default', { month: 'short' });
         const zip = new JSZip();
 
         // Process each student's bookings
@@ -1452,7 +1693,7 @@ async function generateAllPDFs(year = null, month = null) {
             doc.text('Date', 20, yPos);
             doc.text('Time', 80, yPos);
             doc.text('Duration', 140, yPos);
-            doc.text('Amount', 180, yPos);
+            doc.text('Amount', 175, yPos);
             yPos += 8;
 
             // Sort bookings by date
@@ -1476,7 +1717,7 @@ async function generateAllPDFs(year = null, month = null) {
                 doc.text(dateStr, 20, yPos);
                 doc.text(timeStr, 80, yPos);
                 doc.text(durationStr, 140, yPos);
-                doc.text(amountStr, 180, yPos);
+                doc.text(amountStr, 175, yPos);
 
                 totalAmount += booking.amount;
                 yPos += 8;
@@ -1487,21 +1728,31 @@ async function generateAllPDFs(year = null, month = null) {
             doc.setFontSize(12);
             doc.setTextColor(251, 79, 20);
             doc.text(`Total: $${totalAmount.toFixed(2)}`, 150, yPos);
+            
+            // Add footer text
+            yPos = doc.internal.pageSize.height - 30; // Position footer 30 units from bottom
+            doc.setFontSize(10);
+            doc.setTextColor(0);
+            doc.text('Thank you for your business. If you have any questions please feel free to ask.', 20, yPos);
+            yPos += 10;
+            doc.text('Sincerely yours,', 20, yPos);
+            yPos += 7;
+            doc.text('Ryan Lazowski', 20, yPos);
 
-            // Convert PDF to blob and add to zip
+            // Add PDF to zip
             const pdfBlob = doc.output('blob');
-            const filename = `invoice_${studentName.replace(/\s+/g, '_')}_${monthName.replace(/\s+/g, '_')}.pdf`;
+            const filename = `Invoice_${shortMonthName}_${year}_${sanitizeFilename(studentName.replace(/\s+/g, '_'))}.pdf`;
             zip.file(filename, pdfBlob);
         }
 
         // Generate and download zip file
-        const zipBlob = await zip.generateAsync({type: "blob"});
-        const zipFileName = `invoices_${monthName.replace(/\s+/g, '_')}.zip`;
+        const zipBlob = await zip.generateAsync({ type: "blob" });
+        const zipFilename = `Invoices_${shortMonthName}_${year}.zip`;
         
         // Create download link and trigger download
         const downloadLink = document.createElement('a');
         downloadLink.href = URL.createObjectURL(zipBlob);
-        downloadLink.download = zipFileName;
+        downloadLink.download = zipFilename;
         document.body.appendChild(downloadLink);
         downloadLink.click();
         document.body.removeChild(downloadLink);
@@ -1513,11 +1764,13 @@ async function generateAllPDFs(year = null, month = null) {
     }
 }
 
-
-
 // Event Listeners for Invoice Buttons
 document.getElementById('showAllInvoices')?.addEventListener('click', () => showInvoice());
 document.getElementById('downloadAllInvoices').addEventListener('click', () => generateAllPDFs());
+document.getElementById('mergeInvoices').addEventListener('click', () => {
+    populateMergeInvoicesModal();
+    document.getElementById('mergeInvoicesModal').style.display = 'block';
+});
 
 // Month Navigation Setup
 function setupMonthNavigation() {
@@ -1559,61 +1812,97 @@ function setupGlobalFunctions() {
 
 // Modal Event Handlers
 function setupModalHandlers() {
-    window.onclick = function(event) {
-        if (event.target.classList.contains('modal')) {
-            event.target.style.display = 'none';
-        }
-    };
+    // Student modal handlers
+    const studentModal = document.getElementById('studentModal');
+    const manageStudentsBtn = document.getElementById('manageStudentsBtn');
+    const closeStudentModal = studentModal.querySelector('.close');
 
-    // Setup close buttons
-    document.querySelectorAll('.modal .close').forEach(closeBtn => {
-        closeBtn.onclick = function() {
-            this.closest('.modal').style.display = 'none';
-        };
+    manageStudentsBtn.addEventListener('click', () => {
+        studentModal.style.display = 'block';
+    });
+
+    closeStudentModal.addEventListener('click', () => {
+        studentModal.style.display = 'none';
+    });
+
+    // Merge Invoices modal handlers
+    const mergeInvoicesModal = document.getElementById('mergeInvoicesModal');
+    const mergeInvoicesBtn = document.getElementById('mergeInvoices');
+    const closeMergeModal = mergeInvoicesModal.querySelector('.close');
+
+    mergeInvoicesBtn.addEventListener('click', () => {
+        populateMergeInvoicesModal();
+        mergeInvoicesModal.style.display = 'block';
+    });
+
+    closeMergeModal.addEventListener('click', () => {
+        mergeInvoicesModal.style.display = 'none';
+    });
+
+    // Close modals when clicking outside
+    window.addEventListener('click', (event) => {
+        if (event.target === studentModal) {
+            studentModal.style.display = 'none';
+        }
+        if (event.target === mergeInvoicesModal) {
+            mergeInvoicesModal.style.display = 'none';
+        }
     });
 }
 
-// Form Handlers
-function setupFormHandlers() {
-    // Edit Student Form Handler
-    const editStudentForm = document.getElementById('editStudentForm');
-    if (editStudentForm) {
-        editStudentForm.addEventListener('submit', async function(e) {
-            e.preventDefault();
-            const studentId = this.closest('.modal').dataset.studentId;
-            if (!studentId) return;
-
-            const formData = new FormData(this);
-            const updateData = {
-                first_name: formData.get('firstName'),
-                last_name: formData.get('lastName'),
-                email: formData.get('email') || null,
-                phone: formData.get('phone') || null,
-                notes: formData.get('notes') || null
-            };
-
-            await updateStudent(studentId, updateData);
-        });
+// Function to populate the merge invoices modal with available months and students
+function populateMergeInvoicesModal() {
+    const firstMonthSelect = document.getElementById('firstMonth');
+    const secondMonthSelect = document.getElementById('secondMonth');
+    const mergeStudentSelect = document.getElementById('mergeStudentSelect');
+    
+    // Clear existing options
+    firstMonthSelect.innerHTML = '';
+    secondMonthSelect.innerHTML = '';
+    mergeStudentSelect.innerHTML = '<option value="">All Students</option>';
+    
+    // Get all months from bookings
+    const months = [...new Set(bookings.map(booking => {
+        const date = new Date(booking.booking_date);
+        return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`;
+    }))].sort().reverse(); // Sort in reverse chronological order
+    
+    // Populate month selects
+    months.forEach(yearMonth => {
+        const [year, month] = yearMonth.split('-');
+        const date = new Date(year, month - 1);
+        const monthName = date.toLocaleString('default', { month: 'long', year: 'numeric' });
+        
+        const firstOption = document.createElement('option');
+        firstOption.value = yearMonth;
+        firstOption.textContent = monthName;
+        
+        const secondOption = document.createElement('option');
+        secondOption.value = yearMonth;
+        secondOption.textContent = monthName;
+        
+        firstMonthSelect.appendChild(firstOption);
+        secondMonthSelect.appendChild(secondOption);
+    });
+    
+    // Set default second month to be different from first if possible
+    if (months.length > 1) {
+        secondMonthSelect.selectedIndex = 1;
     }
-
-    // Cancel buttons in forms
-    document.querySelectorAll('.cancel-btn').forEach(btn => {
-        btn.addEventListener('click', function() {
-            this.closest('.modal').style.display = 'none';
-        });
+    
+    // Get all unique students
+    const uniqueStudents = [...new Set(bookings.map(booking => booking.student_name))].sort();
+    
+    // Populate student select
+    uniqueStudents.forEach(student => {
+        const option = document.createElement('option');
+        option.value = student;
+        option.textContent = student;
+        mergeStudentSelect.appendChild(option);
     });
-}
-
-// Setup keyboard event listeners
-function setupKeyboardHandlers() {
-    document.addEventListener('keydown', function(e) {
-        if (e.key === 'Escape') {
-            // Close any open modals
-            document.querySelectorAll('.modal').forEach(modal => {
-                modal.style.display = 'none';
-            });
-        }
-    });
+    
+    // Add event listener for the generate button
+    document.getElementById('generateMergedInvoice').onclick = generateMergedInvoice;
 }
 
 // Error Handler Setup
@@ -1677,8 +1966,6 @@ async function init() {
     }
 }
 
-
-
 // Utility function for date formatting
 function formatDate(date) {
     return date.toLocaleDateString('en-US', {
@@ -1713,4 +2000,39 @@ function validateInput(input, type = 'text') {
     };
 
     return patterns[type].test(input);
+}
+
+// Form Handlers
+function setupFormHandlers() {
+    // Student Form Handler
+    const studentForm = document.getElementById('studentForm');
+    if (studentForm) {
+        studentForm.addEventListener('submit', async function(e) {
+            e.preventDefault();
+            const studentName = document.getElementById('studentName').value.trim();
+            if (studentName) {
+                await addStudent(studentName);
+                document.getElementById('studentName').value = '';
+            }
+        });
+    }
+
+    // Cancel buttons in forms
+    document.querySelectorAll('.cancel-btn').forEach(btn => {
+        btn.addEventListener('click', function() {
+            this.closest('.modal').style.display = 'none';
+        });
+    });
+}
+
+// Setup keyboard event listeners
+function setupKeyboardHandlers() {
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            // Close any open modals
+            document.querySelectorAll('.modal').forEach(modal => {
+                modal.style.display = 'none';
+            });
+        }
+    });
 }
